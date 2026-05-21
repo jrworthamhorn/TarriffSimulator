@@ -1,20 +1,23 @@
 export default function handler(req, res) {
   try {
-    // ✅ SAFE BODY PARSE (fixes Vercel issues)
+    // ✅ Safe body parsing for Vercel
     const input =
       typeof req.body === "string"
         ? JSON.parse(req.body)
         : req.body || {};
 
-    // ✅ Normalize helpers
-    const normalizeHTS = (v) => String(v || "").replace(/\D/g, "");
-    const normalizeCountry = (v) =>
-      String(v || "").toLowerCase().trim();
+    // ✅ Helpers
+    const normalizeHTS = (val) => String(val || "").replace(/\D/g, "");
+    const normalizeCountry = (val) =>
+      String(val || "").toLowerCase().trim();
 
     const cleanHTS = normalizeHTS(input.hts);
     const country = normalizeCountry(input.country);
+    const meltCountry = normalizeCountry(input.meltCountry);
+    const metalPercent = Number(input.metalPercent || 0);
+    const value = Number(input.value || 0);
 
-    // ✅ BASIC DATA (can expand later)
+    // ✅ HTS → 9903 mapping dataset (expandable)
     const htsMapping = [
       { hts: "8544429090", code: "9903.85.68", rate: 0.25 },
       { hts: "8544422000", code: "9903.82.09", rate: 0.25 },
@@ -23,7 +26,7 @@ export default function handler(req, res) {
 
     let rules = [];
 
-    // ✅ 232 MAPPING (exact → fallback)
+    // ✅ STEP 1: FIND BEST MATCH (exact → 8-digit → 6-digit)
     let match =
       htsMapping.find(m => normalizeHTS(m.hts) === cleanHTS) ||
       htsMapping.find(m => normalizeHTS(m.hts).substring(0, 8) === cleanHTS.substring(0, 8)) ||
@@ -33,48 +36,57 @@ export default function handler(req, res) {
       rules.push({
         type: "232",
         code: match.code,
-        rate: match.rate
+        rate: match.rate,
+        source: "HTS Mapping"
       });
     }
 
-    // ✅ SECTION 301
+    // ✅ STEP 2: SECTION 301 (China)
     if (country === "china") {
       rules.push({
         type: "301",
         code: "9903.88.03",
-        rate: 0.25
+        rate: 0.25,
+        source: "Section 301"
       });
     }
 
-    // ✅ MELT / POUR LOGIC
-    if (normalizeCountry(input.meltCountry) === "russia") {
-      // override everything (extreme case)
+    // ✅ STEP 3: MELT / POUR LOGIC (high priority override)
+    if (meltCountry === "russia") {
       rules = [{
         type: "232",
         code: "9903.85.67",
-        rate: 2.0
+        rate: 2.0,
+        source: "Russia Melt Override"
       }];
     } else {
-      // adjust for low metal / none
-      rules = rules.map(r => {
-        if (r.type !== "232") return r;
+      // ✅ Low metal adjustments
+      rules = rules.map(rule => {
+        if (rule.type !== "232") return rule;
 
-        if (Number(input.metalPercent) === 0) {
-          return { ...r, code: "9903.82.01", rate: 0 };
+        if (metalPercent === 0) {
+          return {
+            ...rule,
+            code: "9903.82.01",
+            rate: 0,
+            source: "No Metal Content"
+          };
         }
 
-        if (Number(input.metalPercent) < 15) {
-          return { ...r, code: "9903.82.03", rate: 0 };
+        if (metalPercent > 0 && metalPercent < 15) {
+          return {
+            ...rule,
+            code: "9903.82.03",
+            rate: 0,
+            source: "Low Metal Content"
+          };
         }
 
-        return r;
+        return rule;
       });
     }
 
-    // ✅ VALUE SAFETY
-    const value = Number(input.value || 0);
-
-    // ✅ DUTY CALCULATION
+    // ✅ STEP 4: CALCULATE DUTIES
     let total = 0;
 
     const applied = rules.map(rule => {
@@ -84,18 +96,18 @@ export default function handler(req, res) {
       return {
         code: rule.code,
         rate: rule.rate,
-        amount: Number(amount.toFixed(2))
+        amount: Number(amount.toFixed(2)),
+        source: rule.source
       };
     });
 
-    // ✅ FINAL RESPONSE
+    // ✅ STEP 5: RETURN RESULT
     return res.status(200).json({
       applied,
       total: Number(total.toFixed(2))
     });
 
   } catch (error) {
-    // ✅ SAFE ERROR HANDLING (prevents crash)
     console.error("CALCULATION ERROR:", error);
 
     return res.status(500).json({
