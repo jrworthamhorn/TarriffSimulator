@@ -7,32 +7,38 @@ const supabase = createClient(
 
 const normalize = (v) => String(v || "").replace(/\D/g, "");
 
-export default async function handler(req, res) {
+// ✅ HARD-CODED SAMPLE DATA (replace later with full dataset)
+const htsMapping = [
+  { hts: "8544429090", result: "9903.85.68" },
+  { hts: "8544422000", result: "9903.82.09" }
+];
+
+const dutyRules = [
+  { code: "9903.85.68", rate: 0.25 },
+  { code: "9903.82.09", rate: 0.25 }
+];
+
+export default function handler(req, res) {
   try {
     const input = req.body;
 
     const cleanHTS = normalize(input.hts);
 
-    // ✅ Load DB data
-    const { data: mapping } = await supabase.from("hts_mapping").select("*");
-    const { data: dutyRules } = await supabase.from("duty_rules").select("*");
-
     let rules = [];
 
-    // ✅ 232 Mapping (exact → 8 → 6)
+    // ✅ Mapping logic
     let match =
-      mapping.find(r => normalize(r.hts) === cleanHTS) ||
-      mapping.find(r => normalize(r.hts).substring(0, 8) === cleanHTS.substring(0, 8)) ||
-      mapping.find(r => normalize(r.hts).substring(0, 6) === cleanHTS.substring(0, 6));
+      htsMapping.find(r => normalize(r.hts) === cleanHTS) ||
+      htsMapping.find(r => normalize(r.hts).substring(0, 8) === cleanHTS.substring(0, 8)) ||
+      htsMapping.find(r => normalize(r.hts).substring(0, 6) === cleanHTS.substring(0, 6));
 
     if (match) {
-      const d = dutyRules.find(x => x.code === match.result);
+      const duty = dutyRules.find(d => d.code === match.result);
+
       rules.push({
         type: "232",
         code: match.result,
-        rate: Number(d?.rate || 0),
-        startDate: d?.start_date,
-        endDate: d?.end_date
+        rate: Number(duty?.rate || 0)
       });
     }
 
@@ -45,16 +51,7 @@ export default async function handler(req, res) {
       });
     }
 
-    // ✅ Section 122
-    rules.push({
-      type: "122",
-      code: "9903.03.01",
-      rate: 0.10,
-      startDate: "2026-02-24",
-      endDate: "2026-07-23"
-    });
-
-    // ✅ Melt / Pour adjustments
+    // ✅ Melt/Pou logic
     rules = rules.map(r => {
       if (r.type !== "232") return r;
 
@@ -66,29 +63,12 @@ export default async function handler(req, res) {
         return { ...r, code: "9903.82.01", rate: 0 };
       }
 
-      if (input.metalPercent < 15) {
-        return { ...r, code: "9903.82.03", rate: 0 };
-      }
-
       return r;
     });
 
-    // ✅ Date filtering
-    rules = rules.filter(r => {
-      if (!r.startDate) return true;
-      const entry = new Date(input.entryDate);
-      return entry >= new Date(r.startDate) &&
-             entry <= new Date(r.endDate);
-    });
-
-    // ✅ Stacking (232 blocks 122)
-    const has232 = rules.some(r => r.type === "232");
-    if (has232) {
-      rules = rules.filter(r => r.type !== "122");
-    }
-
-    // ✅ Duty calculation
+    // ✅ Calculate
     let total = 0;
+
     const applied = rules.map(r => {
       const amount = input.value * r.rate;
       total += amount;
@@ -100,22 +80,10 @@ export default async function handler(req, res) {
       };
     });
 
-    const result = { applied, total };
-
-    // ✅ Audit logging
-    await supabase.from("audit_log").insert({
-      user_name: input.user,
-      hts: input.hts,
-      country: input.country,
-      value: input.value,
-      entry_date: input.entryDate,
-      result
-    });
-
-    res.status(200).json(result);
+    res.json({ applied, total });
 
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: "Calculation failed" });
+    res.status(500).json({ error: "Failed" });
   }
 }
