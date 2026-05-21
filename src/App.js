@@ -17,7 +17,7 @@ export default function App() {
   const [results, setResults] = useState([]);
   const [loading, setLoading] = useState(false);
 
-  // ✅ Run main tariff engine
+  // ✅ Run tariff calculation
   const runCalculation = async () => {
     setLoading(true);
 
@@ -41,16 +41,21 @@ export default function App() {
 
       const data = await response.json();
 
+      if (!response.ok) {
+        throw new Error(data?.error || "API error");
+      }
+
       const newEntry = {
-        input: { user, hts, country, value, entryDate },
+        input: { user, hts, country, value },
         result: data,
         timestamp: new Date().toLocaleString()
       };
 
       setResults(prev => [newEntry, ...prev]);
+
     } catch (err) {
       alert("Error running simulation");
-      console.error(err);
+      console.error("Frontend error:", err);
     }
 
     setLoading(false);
@@ -58,43 +63,29 @@ export default function App() {
 
   // ✅ AI HTS suggestion
   const getHTSSuggestion = async () => {
-    if (!description) return alert("Enter description first");
-
-    const response = await fetch("/api/ai-classify", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({ description })
-    });
-
-    const data = await response.json();
-
-    if (data?.suggestion) {
-      setHts(data.suggestion);
+    if (!description) {
+      alert("Enter description first");
+      return;
     }
-  };
 
-  // ✅ Scenario comparison
-  const runScenario = async () => {
+    try {
+      const response = await fetch("/api/ai-classify", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ description })
+      });
 
-    const scenarios = [
-      { hts, country: "china", value, entryDate },
-      { hts, country: "vietnam", value, entryDate }
-    ];
+      const data = await response.json();
 
-    const response = await fetch("/api/scenario", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({ scenarios })
-    });
+      if (data?.suggestion) {
+        setHts(data.suggestion);
+      }
 
-    const data = await response.json();
-
-    alert("Scenario comparison complete — check console");
-    console.log(data);
+    } catch (err) {
+      console.error("AI error:", err);
+    }
   };
 
   return (
@@ -117,7 +108,8 @@ export default function App() {
       />
       <button onClick={getHTSSuggestion}>
         Suggest HTS
-      </button><br /><br />
+      </button>
+      <br /><br />
 
       {/* HTS */}
       <input
@@ -161,13 +153,9 @@ export default function App() {
         onChange={(e) => setMetalPercent(e.target.value)}
       /><br /><br />
 
-      {/* ACTIONS */}
+      {/* ACTION BUTTON */}
       <button onClick={runCalculation} disabled={loading}>
         {loading ? "Running..." : "Run Simulation"}
-      </button>
-
-      <button onClick={runScenario}>
-        Run Scenario (China vs Vietnam)
       </button>
 
       <hr />
@@ -179,8 +167,9 @@ export default function App() {
 
         <div key={idx} style={{
           border: "1px solid #ccc",
-          padding: 10,
-          marginBottom: 10
+          padding: 12,
+          marginBottom: 12,
+          background: "#f9f9f9"
         }}>
 
           <div><b>User:</b> {entry.input.user}</div>
@@ -192,17 +181,21 @@ export default function App() {
 
           <b>Applied Duties:</b>
 
-          {entry.result?.applied?.map((r, i) => (
-            <div key={i}>
-              {r.code} ({(r.rate * 100).toFixed(2)}%) → ${r.amount.toFixed(2)}
-            </div>
-          ))}
+          {entry.result?.applied?.length > 0 ? (
+            entry.result.applied.map((r, i) => (
+              <div key={i}>
+                {r.code} ({(r.rate * 100).toFixed(2)}%) → ${r.amount.toFixed(2)}
+              </div>
+            ))
+          ) : (
+            <div>No duties applied</div>
+          )}
 
-          <div style={{ marginTop: 5 }}>
+          <div style={{ marginTop: 6 }}>
             <b>Total Duty:</b> ${entry.result?.total?.toFixed(2)}
           </div>
 
-          <div style={{ fontSize: 12, marginTop: 5 }}>
+          <div style={{ fontSize: 12, marginTop: 5, color: "#555" }}>
             {entry.timestamp}
           </div>
 
@@ -212,4 +205,3 @@ export default function App() {
     </div>
   );
 }
-``
