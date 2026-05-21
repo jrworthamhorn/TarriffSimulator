@@ -1,5 +1,12 @@
 import { useState } from "react";
 
+// ✅ SIMPLE BUILT-IN HTS DATA (expand later)
+const htsData = [
+  { code: "8544429090", description: "insulated electric wire" },
+  { code: "85011040", description: "electric motors" },
+  { code: "72083900", description: "steel products" }
+];
+
 export default function App() {
 
   const [user, setUser] = useState("");
@@ -17,7 +24,42 @@ export default function App() {
   const [results, setResults] = useState([]);
   const [loading, setLoading] = useState(false);
 
-  // ✅ Run tariff calculation
+  // ✅ RESET FORM
+  const resetForm = () => {
+    setUser("");
+    setDescription("");
+    setHts("");
+    setCountry("");
+    setValue("");
+    setEntryDate("");
+    setMeltCountry("");
+    setMetalPercent("");
+  };
+
+  // ✅ OPEN HTS WEBSITE
+  const openHTS = () => {
+    window.open("https://hts.usitc.gov/", "_blank");
+  };
+
+  // ✅ HTS SUGGESTION (no more "Unknown")
+  const getHTSSuggestion = () => {
+    if (!description) {
+      alert("Enter description first");
+      return;
+    }
+
+    const match = htsData.find(item =>
+      item.description.toLowerCase().includes(description.toLowerCase())
+    );
+
+    if (match) {
+      setHts(match.code);
+    } else {
+      alert("No matching HTS found");
+    }
+  };
+
+  // ✅ RUN SIMULATION
   const runCalculation = async () => {
     setLoading(true);
 
@@ -55,37 +97,10 @@ export default function App() {
 
     } catch (err) {
       alert("Error running simulation");
-      console.error("Frontend error:", err);
+      console.error(err);
     }
 
     setLoading(false);
-  };
-
-  // ✅ AI HTS suggestion
-  const getHTSSuggestion = async () => {
-    if (!description) {
-      alert("Enter description first");
-      return;
-    }
-
-    try {
-      const response = await fetch("/api/ai-classify", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({ description })
-      });
-
-      const data = await response.json();
-
-      if (data?.suggestion) {
-        setHts(data.suggestion);
-      }
-
-    } catch (err) {
-      console.error("AI error:", err);
-    }
   };
 
   return (
@@ -100,15 +115,22 @@ export default function App() {
         onChange={(e) => setUser(e.target.value)}
       /><br /><br />
 
-      {/* DESCRIPTION + AI */}
+      {/* DESCRIPTION */}
       <input
         placeholder="Product Description"
         value={description}
         onChange={(e) => setDescription(e.target.value)}
       />
+
+      {/* HTS BUTTONS */}
       <button onClick={getHTSSuggestion}>
         Suggest HTS
       </button>
+
+      <button onClick={openHTS} style={{ marginLeft: 10 }}>
+        Open HTS Website
+      </button>
+
       <br /><br />
 
       {/* HTS */}
@@ -139,7 +161,7 @@ export default function App() {
         onChange={(e) => setEntryDate(e.target.value)}
       /><br /><br />
 
-      {/* MELT COUNTRY */}
+      {/* MELT */}
       <input
         placeholder="Melt / Pour Country"
         value={meltCountry}
@@ -153,9 +175,13 @@ export default function App() {
         onChange={(e) => setMetalPercent(e.target.value)}
       /><br /><br />
 
-      {/* ACTION BUTTON */}
+      {/* ACTION BUTTONS */}
       <button onClick={runCalculation} disabled={loading}>
         {loading ? "Running..." : "Run Simulation"}
+      </button>
+
+      <button onClick={resetForm} style={{ marginLeft: 10 }}>
+        Reset Form
       </button>
 
       <hr />
