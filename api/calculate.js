@@ -1,49 +1,44 @@
-import { createClient } from "@supabase/supabase-js";
-
-const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_KEY
-);
-
-const normalize = (v) => String(v || "").replace(/\D/g, "");
-
-// ✅ HARD-CODED SAMPLE DATA (replace later with full dataset)
-const htsMapping = [
-  { hts: "8544429090", result: "9903.85.68" },
-  { hts: "8544422000", result: "9903.82.09" }
-];
-
-const dutyRules = [
-  { code: "9903.85.68", rate: 0.25 },
-  { code: "9903.82.09", rate: 0.25 }
-];
-
 export default function handler(req, res) {
   try {
-    const input = req.body;
+    // ✅ SAFE BODY PARSE (fixes Vercel issues)
+    const input =
+      typeof req.body === "string"
+        ? JSON.parse(req.body)
+        : req.body || {};
 
-    const cleanHTS = normalize(input.hts);
+    // ✅ Normalize helpers
+    const normalizeHTS = (v) => String(v || "").replace(/\D/g, "");
+    const normalizeCountry = (v) =>
+      String(v || "").toLowerCase().trim();
+
+    const cleanHTS = normalizeHTS(input.hts);
+    const country = normalizeCountry(input.country);
+
+    // ✅ BASIC DATA (can expand later)
+    const htsMapping = [
+      { hts: "8544429090", code: "9903.85.68", rate: 0.25 },
+      { hts: "8544422000", code: "9903.82.09", rate: 0.25 },
+      { hts: "7318152065", code: "9903.82.02", rate: 0.25 }
+    ];
 
     let rules = [];
 
-    // ✅ Mapping logic
+    // ✅ 232 MAPPING (exact → fallback)
     let match =
-      htsMapping.find(r => normalize(r.hts) === cleanHTS) ||
-      htsMapping.find(r => normalize(r.hts).substring(0, 8) === cleanHTS.substring(0, 8)) ||
-      htsMapping.find(r => normalize(r.hts).substring(0, 6) === cleanHTS.substring(0, 6));
+      htsMapping.find(m => normalizeHTS(m.hts) === cleanHTS) ||
+      htsMapping.find(m => normalizeHTS(m.hts).substring(0, 8) === cleanHTS.substring(0, 8)) ||
+      htsMapping.find(m => normalizeHTS(m.hts).substring(0, 6) === cleanHTS.substring(0, 6));
 
     if (match) {
-      const duty = dutyRules.find(d => d.code === match.result);
-
       rules.push({
         type: "232",
-        code: match.result,
-        rate: Number(duty?.rate || 0)
+        code: match.code,
+        rate: match.rate
       });
     }
 
-    // ✅ Section 301
-    if (input.country?.toLowerCase() === "china") {
+    // ✅ SECTION 301
+    if (country === "china") {
       rules.push({
         type: "301",
         code: "9903.88.03",
@@ -51,39 +46,61 @@ export default function handler(req, res) {
       });
     }
 
-    // ✅ Melt/Pou logic
-    rules = rules.map(r => {
-      if (r.type !== "232") return r;
+    // ✅ MELT / POUR LOGIC
+    if (normalizeCountry(input.meltCountry) === "russia") {
+      // override everything (extreme case)
+      rules = [{
+        type: "232",
+        code: "9903.85.67",
+        rate: 2.0
+      }];
+    } else {
+      // adjust for low metal / none
+      rules = rules.map(r => {
+        if (r.type !== "232") return r;
 
-      if (input.meltCountry === "russia") {
-        return { ...r, code: "9903.85.67", rate: 2.0 };
-      }
+        if (Number(input.metalPercent) === 0) {
+          return { ...r, code: "9903.82.01", rate: 0 };
+        }
 
-      if (input.metalPercent === 0) {
-        return { ...r, code: "9903.82.01", rate: 0 };
-      }
+        if (Number(input.metalPercent) < 15) {
+          return { ...r, code: "9903.82.03", rate: 0 };
+        }
 
-      return r;
-    });
+        return r;
+      });
+    }
 
-    // ✅ Calculate
+    // ✅ VALUE SAFETY
+    const value = Number(input.value || 0);
+
+    // ✅ DUTY CALCULATION
     let total = 0;
 
-    const applied = rules.map(r => {
-      const amount = input.value * r.rate;
+    const applied = rules.map(rule => {
+      const amount = value * rule.rate;
       total += amount;
 
       return {
-        code: r.code,
-        rate: r.rate,
-        amount
+        code: rule.code,
+        rate: rule.rate,
+        amount: Number(amount.toFixed(2))
       };
     });
 
-    res.json({ applied, total });
+    // ✅ FINAL RESPONSE
+    return res.status(200).json({
+      applied,
+      total: Number(total.toFixed(2))
+    });
 
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Failed" });
+  } catch (error) {
+    // ✅ SAFE ERROR HANDLING (prevents crash)
+    console.error("CALCULATION ERROR:", error);
+
+    return res.status(500).json({
+      error: "Calculation failed",
+      message: error.message
+    });
   }
 }
